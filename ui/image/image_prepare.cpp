@@ -507,6 +507,7 @@ ReadResult Read(ReadArgs &&args) {
 }
 
 QImage Blur(QImage &&image) {
+//	std::cout << "in Blur" << std::endl;
 	if (image.isNull()) {
 		return std::move(image);
 	}
@@ -525,13 +526,14 @@ QImage Blur(QImage &&image) {
 	}
 	const auto w = image.width();
 	const auto h = image.height();
-	const auto radius = 3;
+	const auto radius = 8;
 	const auto r1 = radius + 1;
 	const auto div = radius * 2 + 1;
 	const auto stride = w * 4;
 	if (radius >= 16 || div >= w || div >= h || stride > w * 4) {
 		return std::move(image);
 	}
+//	std::cout << "radius " << radius << std::endl;
 	const auto withalpha = image.hasAlphaChannel();
 	if (withalpha) {
 		auto smaller = QImage(image.size(), image.format());
@@ -1175,6 +1177,7 @@ QImage Prepare(QImage image, int w, int h, const PrepareArgs &args) {
 	Expects(!image.isNull());
 
 	if (args.options & Option::Blur) {
+//		std::cout << "in Prepare Blur is true" << std::endl;
 		image = Blur(std::move(image));
 		Assert(!image.isNull());
 	}

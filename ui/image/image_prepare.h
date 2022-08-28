@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <iostream>
 #include "base/flags.h"
 #include "ui/rect_part.h"
 #include "ui/style/style_core.h"
