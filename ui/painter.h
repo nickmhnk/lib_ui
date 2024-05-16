@@ -11,6 +11,10 @@
 #include <QtCore/QPoint>
 #include <QtGui/QPainter>
 
+namespace Ui::Text {
+struct SpoilerMess;
+} // namespace Ui::Text
+
 class Painter : public QPainter {
 public:
 	explicit Painter(QPaintDevice *device) : QPainter(device) {
@@ -19,12 +23,16 @@ public:
 	void drawTextLeft(int x, int y, int outerw, const QString &text, int textWidth = -1) {
 		QFontMetrics m(fontMetrics());
 		if (style::RightToLeft() && textWidth < 0) textWidth = m.horizontalAdvance(text);
-		drawText(style::RightToLeft() ? (outerw - x - textWidth) : x, y + m.ascent(), text);
+		const auto result = style::FindAdjustResult(font());
+		const auto ascent = result ? result->iascent : m.ascent();
+		drawText(style::RightToLeft() ? (outerw - x - textWidth) : x, y + ascent, text);
 	}
 	void drawTextRight(int x, int y, int outerw, const QString &text, int textWidth = -1) {
 		QFontMetrics m(fontMetrics());
 		if (!style::RightToLeft() && textWidth < 0) textWidth = m.horizontalAdvance(text);
-		drawText(style::RightToLeft() ? x : (outerw - x - textWidth), y + m.ascent(), text);
+		const auto result = style::FindAdjustResult(font());
+		const auto ascent = result ? result->iascent : m.ascent();
+		drawText(style::RightToLeft() ? x : (outerw - x - textWidth), y + ascent, text);
 	}
 	void drawPixmapLeft(int x, int y, int outerw, const QPixmap &pix, const QRect &from) {
 		drawPixmap(QPoint(style::RightToLeft() ? (outerw - x - (from.width() / pix.devicePixelRatio())) : x, y), pix, from);
@@ -78,9 +86,19 @@ public:
 	[[nodiscard]] bool inactive() const {
 		return _inactive;
 	}
+	void setTextSpoilerMess(not_null<Ui::Text::SpoilerMess*> mess) {
+		_spoilerMess = mess;
+	}
+	void restoreTextSpoilerMess() {
+		_spoilerMess = nullptr;
+	}
+	[[nodiscard]] Ui::Text::SpoilerMess *textSpoilerMess() const {
+		return _spoilerMess;
+	}
 
 private:
 	const style::TextPalette *_textPalette = nullptr;
+	Ui::Text::SpoilerMess *_spoilerMess = nullptr;
 	bool _inactive = false;
 
 };
@@ -119,5 +137,32 @@ public:
 private:
 	QPainter &_painter;
 	QPainter::RenderHints _hints;
+
+};
+
+class ScopedPainterOpacity {
+public:
+	ScopedPainterOpacity(QPainter &p, float64 nowOpacity)
+	: _painter(p)
+	, _wasOpacity(p.opacity()) {
+		if (_wasOpacity != nowOpacity) {
+			_painter.setOpacity(nowOpacity);
+		}
+	}
+
+	ScopedPainterOpacity(
+		const ScopedPainterOpacity &other) = delete;
+	ScopedPainterOpacity &operator=(
+		const ScopedPainterOpacity &other) = delete;
+
+	~ScopedPainterOpacity() {
+		if (_painter.isActive()) {
+			_painter.setOpacity(_wasOpacity);
+		}
+	}
+
+private:
+	QPainter &_painter;
+	const float64 _wasOpacity;
 
 };

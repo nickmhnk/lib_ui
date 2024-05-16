@@ -13,6 +13,7 @@
 #include "ui/widgets/labels.h"
 #include "ui/layers/layer_widget.h"
 #include "ui/layers/show.h"
+#include "ui/effects/animations.h"
 #include "ui/effects/animation_value.h"
 #include "ui/text/text_entity.h"
 #include "ui/rp_widget.h"
@@ -30,6 +31,15 @@ struct IconButton;
 struct ScrollArea;
 struct Box;
 } // namespace style
+
+namespace st {
+extern const style::ScrollArea &boxScroll;
+} // namespace st
+
+namespace Ui::Toast {
+struct Config;
+class Instance;
+} // namespace Ui::Toast
 
 namespace Ui {
 class GenericBox;
@@ -50,6 +60,7 @@ class ScrollArea;
 class FlatLabel;
 class FadeShadow;
 class BoxContent;
+struct ScrollToRequest;
 
 class BoxContentDelegate {
 public:
@@ -91,12 +102,12 @@ public:
 		return result;
 	}
 
+	virtual ShowFactory showFactory() = 0;
 	virtual QPointer<QWidget> outerContainer() = 0;
 
 };
 
 class BoxContent : public RpWidget {
-
 public:
 	BoxContent() {
 		setAttribute(Qt::WA_OpaquePaintEvent);
@@ -186,6 +197,9 @@ public:
 		prepare();
 		finishPrepare();
 	}
+	[[nodiscard]] bool hasDelegate() const {
+		return _delegate != nullptr;
+	}
 	[[nodiscard]] not_null<BoxContentDelegate*> getDelegate() const {
 		return _delegate;
 	}
@@ -201,6 +215,23 @@ public:
 	void scrollByDraggingDelta(int delta);
 
 	void scrollToY(int top, int bottom = -1);
+	void scrollTo(
+		ScrollToRequest request,
+		anim::type animated = anim::type::instant);
+	void sendScrollViewportEvent(not_null<QEvent*> event);
+	[[nodiscard]] rpl::producer<> scrolls() const;
+	[[nodiscard]] int scrollTop() const;
+	[[nodiscard]] int scrollHeight() const;
+
+	base::weak_ptr<Toast::Instance> showToast(Toast::Config &&config);
+	base::weak_ptr<Toast::Instance> showToast(
+		TextWithEntities &&text,
+		crl::time duration = 0);
+	base::weak_ptr<Toast::Instance> showToast(
+		const QString &text,
+		crl::time duration = 0);
+
+	[[nodiscard]] std::shared_ptr<Show> uiShow();
 
 protected:
 	virtual void prepare() = 0;
@@ -242,11 +273,11 @@ protected:
 			object_ptr<Widget> inner,
 			int topSkip = 0,
 			int bottomSkip = 0) {
-		auto result = QPointer<Widget>(inner.data());
-		setInnerTopSkip(topSkip);
-		setInnerBottomSkip(bottomSkip);
-		setInner(std::move(inner));
-		return result;
+		return setInnerWidget(
+			std::move(inner),
+			st::boxScroll,
+			topSkip,
+			bottomSkip);
 	}
 
 	template <typename Widget>
@@ -265,11 +296,10 @@ protected:
 private:
 	void finishPrepare();
 	void finishScrollCreate();
-	void setInner(object_ptr<TWidget> inner);
 	void setInner(object_ptr<TWidget> inner, const style::ScrollArea &st);
 	void updateScrollAreaGeometry();
 	void updateInnerVisibleTopBottom();
-	void updateShadowsVisibility();
+	void updateShadowsVisibility(anim::type animated = anim::type::normal);
 	object_ptr<TWidget> doTakeInnerWidget();
 
 	BoxContentDelegate *_delegate = nullptr;
@@ -284,6 +314,7 @@ private:
 	object_ptr<FadeShadow> _bottomShadow = { nullptr };
 
 	Ui::DraggingScrollManager _draggingScroll;
+	Ui::Animations::Simple _scrollAnimation;
 
 	rpl::event_stream<> _boxClosingStream;
 
@@ -344,22 +375,6 @@ private:
 
 	QPointer<BoxContent> _value;
 
-};
-
-class BoxShow : public Show {
-public:
-	explicit BoxShow(not_null<Ui::BoxContent*> box);
-	~BoxShow();
-	void showBox(
-		object_ptr<BoxContent> content,
-		LayerOptions options = LayerOption::KeepOther) const override;
-	void hideLayer() const override;
-	[[nodiscard]] not_null<QWidget*> toastParent() const override;
-	[[nodiscard]] bool valid() const override;
-	operator bool() const override;
-private:
-	mutable QPointer<QWidget> _toastParent;
-	const QPointer<Ui::BoxContent> _weak;
 };
 
 } // namespace Ui

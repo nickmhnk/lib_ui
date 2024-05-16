@@ -1,10 +1,9 @@
-/*
-This file is part of Telegram Desktop,
-the official desktop application for the Telegram messaging service.
-
-For license and copyright information please follow this link:
-https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
-*/
+// This file is part of Desktop App Toolkit,
+// a set of libraries for developing nice desktop applications.
+//
+// For license and copyright information please follow this link:
+// https://github.com/desktop-app/legal/blob/master/LEGAL
+//
 #include "ui/widgets/separate_panel.h"
 
 #include "ui/widgets/shadow.h"
@@ -16,10 +15,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/wrap/padding_wrap.h"
 #include "ui/wrap/fade_wrap.h"
-#include "ui/toasts/common_toasts.h"
 #include "ui/platform/ui_platform_utility.h"
+#include "ui/layers/box_content.h"
 #include "ui/layers/layer_widget.h"
 #include "ui/layers/show.h"
+#include "ui/style/style_core_palette.h"
+#include "ui/painter.h"
+#include "ui/rect.h"
+#include "base/platform/base_platform_info.h"
 #include "base/debug_log.h"
 #include "styles/style_widgets.h"
 #include "styles/style_layers.h"
@@ -36,10 +39,14 @@ class PanelShow final : public Show {
 public:
 	explicit PanelShow(not_null<SeparatePanel*> panel);
 	~PanelShow();
-	void showBox(
-		object_ptr<Ui::BoxContent> content,
-		Ui::LayerOptions options = Ui::LayerOption::KeepOther) const override;
-	void hideLayer() const override;
+
+	void showOrHideBoxOrLayer(
+		std::variant<
+			v::null_t,
+			object_ptr<BoxContent>,
+			std::unique_ptr<LayerWidget>> &&layer,
+		LayerOptions options,
+		anim::type animated) const override;
 	[[nodiscard]] not_null<QWidget*> toastParent() const override;
 	[[nodiscard]] bool valid() const override;
 	operator bool() const override;
@@ -49,26 +56,69 @@ private:
 
 };
 
+[[nodiscard]] std::unique_ptr<style::palette> MakeAdjustedPalette(
+		QColor color) {
+	auto result = std::make_unique<style::palette>();
+	*result = *style::main_palette::get();
+
+	const auto set = [](const style::color &color, QColor value) {
+		color.set(
+			uchar(value.red()),
+			uchar(value.green()),
+			uchar(value.blue()),
+			uchar(value.alpha()));
+	};
+
+	const auto contrast = 2.5;
+	const auto luminance = 0.2126 * color.redF()
+		+ 0.7152 * color.greenF()
+		+ 0.0722 * color.blueF();
+	const auto textColor = (luminance > 0.5)
+		? QColor(0, 0, 0)
+		: QColor(255, 255, 255);
+	const auto textLuminance = (luminance > 0.5) ? 0 : 1;
+	const auto adaptiveOpacity = (luminance - textLuminance + contrast)
+		/ contrast;
+	const auto opacity = std::clamp(adaptiveOpacity, 0.5, 0.64);
+	auto buttonColor = textColor;
+	buttonColor.setAlphaF(opacity);
+	auto rippleColor = textColor;
+	rippleColor.setAlphaF(opacity * 0.1);
+
+	set(result->windowFg(), textColor);
+	set(result->boxTitleCloseFg(), buttonColor);
+	set(result->boxTitleCloseFgOver(), buttonColor);
+	set(result->windowBgOver(), rippleColor);
+
+	result->finalize();
+	return result;
+}
+
 PanelShow::PanelShow(not_null<SeparatePanel*> panel)
 : _panel(panel.get()) {
 }
 
 PanelShow::~PanelShow() = default;
 
-void PanelShow::showBox(
-		object_ptr<Ui::BoxContent> content,
-		Ui::LayerOptions options) const {
-	if (const auto panel = _panel.data()) {
-		panel->showBox(std::move(content), options, anim::type::normal);
-	}
-}
-
-void PanelShow::hideLayer() const {
-	if (const auto panel = _panel.data()) {
-		panel->showBox(
-			object_ptr<Ui::BoxContent>{ nullptr },
-			Ui::LayerOption::CloseOther,
-			anim::type::normal);
+void PanelShow::showOrHideBoxOrLayer(
+		std::variant<
+			v::null_t,
+			object_ptr<BoxContent>,
+			std::unique_ptr<LayerWidget>> &&layer,
+		LayerOptions options,
+		anim::type animated) const {
+	using UniqueLayer = std::unique_ptr<LayerWidget>;
+	using ObjectBox = object_ptr<BoxContent>;
+	if (auto layerWidget = std::get_if<UniqueLayer>(&layer)) {
+		if (const auto panel = _panel.data()) {
+			panel->showLayer(std::move(*layerWidget), options, animated);
+		}
+	} else if (auto box = std::get_if<ObjectBox>(&layer)) {
+		if (const auto panel = _panel.data()) {
+			panel->showBox(std::move(*box), options, animated);
+		}
+	} else if (const auto panel = _panel.data()) {
+		panel->hideLayer(animated);
 	}
 }
 
@@ -92,7 +142,7 @@ PanelShow::operator bool() const {
 SeparatePanel::SeparatePanel(SeparatePanelArgs &&args)
 : RpWidget(args.parent)
 , _close(this, st::separatePanelClose)
-, _back(this, object_ptr<Ui::IconButton>(this, st::separatePanelBack))
+, _back(this, object_ptr<IconButton>(this, st::separatePanelBack))
 , _body(this)
 , _titleHeight(st::separatePanelTitleHeight) {
 	setMouseTracking(true);
@@ -101,8 +151,11 @@ SeparatePanel::SeparatePanel(SeparatePanelArgs &&args)
 	initLayout(args);
 }
 
+SeparatePanel::~SeparatePanel() = default;
+
 void SeparatePanel::setTitle(rpl::producer<QString> title) {
 	_title.create(this, std::move(title), st::separatePanelTitle);
+	updateTitleColors();
 	_title->setAttribute(Qt::WA_TransparentForMouseEvents);
 	_title->show();
 	updateTitleGeometry(width());
@@ -118,15 +171,13 @@ void SeparatePanel::initControls() {
 	) | rpl::start_with_next([=](int width) {
 		_back->moveToLeft(_padding.left(), _padding.top());
 		_close->moveToRight(_padding.right(), _padding.top());
-		if (_title) {
-			updateTitleGeometry(width);
-		}
+		updateTitleGeometry(width);
 	}, lifetime());
 
 	_back->toggledValue(
 	) | rpl::start_with_next([=](bool toggled) {
 		_titleLeft.start(
-			[=] { updateTitlePosition(); },
+			[=] { updateTitleGeometry(width()); },
 			toggled ? 0. : 1.,
 			toggled ? 1. : 0.,
 			st::fadeWrapDuration);
@@ -138,15 +189,55 @@ void SeparatePanel::initControls() {
 	_close->raise();
 }
 
-void SeparatePanel::updateTitleGeometry(int newWidth) {
-	_title->resizeToWidth(newWidth
-		- _padding.left() - _back->width()
-		- _padding.right() - _close->width()
-		- (_menuToggle ? _menuToggle->width() : 0));
-	updateTitlePosition();
+void SeparatePanel::updateTitleButtonColors(not_null<IconButton*> button) {
+	if (!_titleOverridePalette) {
+		_titleOverrideStyles.remove(button);
+		button->setIconOverride(nullptr, nullptr);
+		button->setRippleColorOverride(nullptr);
+		return;
+	}
+	const auto &st = button->st();
+	auto &updated = _titleOverrideStyles[button];
+	updated = std::make_unique<style::IconButton>(st);
+	updated->icon = st.icon.withPalette(*_titleOverridePalette);
+	updated->iconOver = st.iconOver.withPalette(*_titleOverridePalette);
+	updated->ripple.color = _titleOverridePalette->windowBgOver();
+	button->setIconOverride(&updated->icon, &updated->iconOver);
+	button->setRippleColorOverride(&updated->ripple.color);
 }
 
-void SeparatePanel::updateTitlePosition() {
+void SeparatePanel::updateTitleColors() {
+	_title->setTextColorOverride(_titleOverridePalette
+		? _titleOverridePalette->windowFg()->c
+		: std::optional<QColor>());
+}
+
+void SeparatePanel::overrideTitleColor(std::optional<QColor> color) {
+	if (_titleOverrideColor == color) {
+		return;
+	}
+	_titleOverrideColor = color;
+	_titleOverrideBorderParts = _titleOverrideColor
+		? createBorderImage(*_titleOverrideColor)
+		: QPixmap();
+	_titleOverridePalette = color
+		? MakeAdjustedPalette(*color)
+		: nullptr;
+	updateTitleButtonColors(_back->entity());
+	updateTitleButtonColors(_close.data());
+	if (_menuToggle) {
+		updateTitleButtonColors(_menuToggle.data());
+	}
+	if (_title) {
+		updateTitleColors();
+	}
+	if (!_titleOverridePalette) {
+		_titleOverrideStyles.clear();
+	}
+	update();
+}
+
+void SeparatePanel::updateTitleGeometry(int newWidth) const {
 	if (!_title) {
 		return;
 	}
@@ -155,6 +246,11 @@ void SeparatePanel::updateTitlePosition() {
 		st::separatePanelTitleLeft,
 		_back->width() + st::separatePanelTitleSkip,
 		progress);
+	_title->resizeToWidth(newWidth
+		- rect::m::sum::h(_padding)
+		- left
+		- _close->width()
+		- (_menuToggle ? _menuToggle->width() : 0));
 	_title->moveToLeft(
 		_padding.left() + left,
 		_padding.top() + st::separatePanelTitleTop);
@@ -185,6 +281,7 @@ void SeparatePanel::setBackAllowed(bool allowed) {
 void SeparatePanel::setMenuAllowed(
 		Fn<void(const Menu::MenuCallback&)> fill) {
 	_menuToggle.create(this, st::separatePanelMenu);
+	updateTitleButtonColors(_menuToggle.data());
 	_menuToggle->show();
 	_menuToggle->setClickedCallback([=] { showMenu(fill); });
 
@@ -194,6 +291,7 @@ void SeparatePanel::setMenuAllowed(
 			_padding.right() + _close->width(),
 			_padding.top());
 	}, _menuToggle->lifetime());
+	updateTitleGeometry(width());
 }
 
 void SeparatePanel::showMenu(Fn<void(const Menu::MenuCallback&)> fill) {
@@ -221,8 +319,8 @@ bool SeparatePanel::createMenu(not_null<IconButton*> button) {
 	}
 	_menu = base::make_unique_q<PopupMenu>(this, st::popupMenuWithIcons);
 	_menu->setDestroyedCallback([
-		weak = Ui::MakeWeak(this),
-			weakButton = Ui::MakeWeak(button),
+		weak = MakeWeak(this),
+			weakButton = MakeWeak(button),
 			menu = _menu.get()]{
 		if (weak && weak->_menu == menu) {
 			if (weakButton) {
@@ -289,19 +387,23 @@ void SeparatePanel::initLayout(const SeparatePanelArgs &args) {
 	setAttribute(Qt::WA_NoSystemBackground, true);
 	setAttribute(Qt::WA_TranslucentBackground, true);
 
-	createBorderImage();
+	validateBorderImage();
 	style::PaletteChanged(
 	) | rpl::start_with_next([=] {
-		createBorderImage();
-		Ui::ForceFullRepaint(this);
+		validateBorderImage();
+		ForceFullRepaint(this);
 	}, lifetime());
 
 	if (args.onAllSpaces) {
-		Ui::Platform::InitOnTopPanel(this);
+		Platform::InitOnTopPanel(this);
 	}
 }
 
-void SeparatePanel::createBorderImage() {
+void SeparatePanel::validateBorderImage() {
+	_borderParts = createBorderImage(st::windowBg->c);
+}
+
+QPixmap SeparatePanel::createBorderImage(QColor color) const {
 	const auto shadowPadding = st::callShadow.extend;
 	const auto cacheSize = st::separatePanelBorderCacheSize;
 	auto cache = QImage(
@@ -311,12 +413,12 @@ void SeparatePanel::createBorderImage() {
 	cache.setDevicePixelRatio(style::DevicePixelRatio());
 	cache.fill(Qt::transparent);
 	{
-		Painter p(&cache);
+		auto p = QPainter(&cache);
 		auto inner = QRect(0, 0, cacheSize, cacheSize).marginsRemoved(
 			shadowPadding);
-		Ui::Shadow::paint(p, inner, cacheSize, st::callShadow);
+		Shadow::paint(p, inner, cacheSize, st::callShadow);
 		p.setCompositionMode(QPainter::CompositionMode_Source);
-		p.setBrush(st::windowBg);
+		p.setBrush(color);
 		p.setPen(Qt::NoPen);
 		PainterHighQualityEnabler hq(p);
 		p.drawRoundedRect(
@@ -324,7 +426,7 @@ void SeparatePanel::createBorderImage() {
 			st::callRadius,
 			st::callRadius);
 	}
-	_borderParts = Ui::PixmapFromImage(std::move(cache));
+	return PixmapFromImage(std::move(cache));
 }
 
 void SeparatePanel::toggleOpacityAnimation(bool visible) {
@@ -336,7 +438,7 @@ void SeparatePanel::toggleOpacityAnimation(bool visible) {
 	if (_useTransparency) {
 		if (_animationCache.isNull()) {
 			showControls();
-			_animationCache = Ui::GrabWidget(this);
+			_animationCache = GrabWidget(this);
 			hideChildren();
 		}
 		_opacityAnimation.start(
@@ -398,33 +500,59 @@ int SeparatePanel::hideGetDuration() {
 }
 
 void SeparatePanel::showBox(
-		object_ptr<Ui::BoxContent> box,
-		Ui::LayerOptions options,
+		object_ptr<BoxContent> box,
+		LayerOptions options,
 		anim::type animated) {
-	if (box) {
-		ensureLayerCreated();
-		_layer->showBox(std::move(box), options, animated);
-	} else if (_layer) {
+	Expects(box != nullptr);
+
+	ensureLayerCreated();
+	_layer->showBox(std::move(box), options, animated);
+}
+
+void SeparatePanel::showLayer(
+		std::unique_ptr<LayerWidget> layer,
+		LayerOptions options,
+		anim::type animated) {
+	Expects(layer != nullptr);
+
+	ensureLayerCreated();
+	_layer->showLayer(std::move(layer), options, animated);
+}
+
+void SeparatePanel::hideLayer(anim::type animated) {
+	if (_layer) {
 		_layer->hideAll(animated);
 	}
+}
+
+base::weak_ptr<Toast::Instance> SeparatePanel::showToast(
+		Toast::Config &&config) {
+	return PanelShow(this).showToast(std::move(config));
+}
+
+base::weak_ptr<Toast::Instance> SeparatePanel::showToast(
+		TextWithEntities &&text,
+		crl::time duration) {
+	return PanelShow(this).showToast(std::move(text), duration);
+}
+
+base::weak_ptr<Toast::Instance> SeparatePanel::showToast(
+		const QString &text,
+		crl::time duration) {
+	return PanelShow(this).showToast(text, duration);
 }
 
 std::shared_ptr<Show> SeparatePanel::uiShow() {
 	return std::make_shared<PanelShow>(this);
 }
 
-void SeparatePanel::showToast(const TextWithEntities &text) {
-	Ui::ShowMultilineToast({
-		.parentOverride = this,
-		.text = text,
-	});
-}
-
 void SeparatePanel::ensureLayerCreated() {
 	if (_layer) {
 		return;
 	}
-	_layer = base::make_unique_q<Ui::LayerStackWidget>(_body);
+	_layer = base::make_unique_q<LayerStackWidget>(
+		_body,
+		crl::guard(this, [=] { return std::make_shared<PanelShow>(this); }));
 	_layer->setHideByBackgroundClick(false);
 	_layer->move(0, 0);
 	_body->sizeValue(
@@ -445,17 +573,24 @@ void SeparatePanel::destroyLayer() {
 	}
 
 	auto layer = base::take(_layer);
-	const auto resetFocus = Ui::InFocusChain(layer);
+	const auto resetFocus = InFocusChain(layer);
 	if (resetFocus) {
 		setFocus();
 	}
 	layer = nullptr;
 }
 
-void SeparatePanel::showInner(base::unique_qptr<Ui::RpWidget> inner) {
+RpWidget *SeparatePanel::inner() const {
+	return _inner.get();
+}
+
+void SeparatePanel::showInner(base::unique_qptr<RpWidget> inner) {
 	Expects(!size().isEmpty());
 
+	auto old = base::take(_inner);
 	_inner = std::move(inner);
+	old = nullptr; // Make sure in old destructor inner() != old.
+
 	_inner->setParent(_body);
 	_inner->move(0, 0);
 	_body->sizeValue(
@@ -526,7 +661,7 @@ void SeparatePanel::initGeometry(QSize size) {
 	if (center.y() - size.height() / 2 < available.y()) {
 		center.setY(available.y() + size.height() / 2);
 	}
-	_useTransparency = Ui::Platform::TranslucentWindowsSupported(center);
+	_useTransparency = Platform::TranslucentWindowsSupported();
 	_padding = _useTransparency
 		? st::callShadow.extend
 		: style::margins(
@@ -539,21 +674,21 @@ void SeparatePanel::initGeometry(QSize size) {
 		const QRect initRect(QPoint(), size);
 		return initRect.translated(center - initRect.center()).marginsAdded(_padding);
 	}();
-	setGeometry(rect);
-	setMinimumSize(rect.size());
-	setMaximumSize(rect.size());
+	move(rect.topLeft());
+	setFixedSize(rect.size());
+	createWinId();
+	if (_useTransparency) {
+		Platform::SetWindowMargins(this, _padding);
+	} else {
+		Platform::UnsetWindowMargins(this);
+	}
 	updateControlsGeometry();
 }
 
 void SeparatePanel::updateGeometry(QSize size) {
-	const auto rect = QRect(
-		x(),
-		y(),
+	setFixedSize(
 		_padding.left() + size.width() + _padding.right(),
 		_padding.top() + size.height() + _padding.bottom());
-	setGeometry(rect);
-	setMinimumSize(rect.size());
-	setMaximumSize(rect.size());
 	updateControlsGeometry();
 	update();
 }
@@ -572,7 +707,7 @@ void SeparatePanel::updateControlsGeometry() {
 }
 
 void SeparatePanel::paintEvent(QPaintEvent *e) {
-	Painter p(this);
+	auto p = QPainter(this);
 	if (!_animationCache.isNull()) {
 		auto opacity = _opacityAnimation.value(_visible ? 1. : 0.);
 		if (!_opacityAnimation.animating()) {
@@ -605,21 +740,30 @@ void SeparatePanel::paintEvent(QPaintEvent *e) {
 	}
 }
 
-void SeparatePanel::paintShadowBorder(Painter &p) const {
+void SeparatePanel::paintShadowBorder(QPainter &p) const {
 	const auto factor = style::DevicePixelRatio();
 	const auto size = st::separatePanelBorderCacheSize;
 	const auto part1 = size / 3;
 	const auto part2 = size - part1;
 	const auto corner = QSize(part1, part1) * factor;
+	const auto radius = st::callRadius;
 
+	const auto &header = _titleOverrideColor
+		? _titleOverrideBorderParts
+		: _borderParts;
 	const auto topleft = QRect(QPoint(0, 0), corner);
-	p.drawPixmap(QRect(0, 0, part1, part1), _borderParts, topleft);
+	p.drawPixmap(QRect(0, 0, part1, part1), header, topleft);
 
 	const auto topright = QRect(QPoint(part2, 0) * factor, corner);
+	p.drawPixmap(QRect(width() - part1, 0, part1, part1), header, topright);
+
+	const auto top = QRect(
+		QPoint(part1, 0) * factor,
+		QSize(part2 - part1, _padding.top() + radius) * factor);
 	p.drawPixmap(
-		QRect(width() - part1, 0, part1, part1),
-		_borderParts,
-		topright);
+		QRect(part1, 0, width() - 2 * part1, _padding.top() + radius),
+		header,
+		top);
 
 	const auto bottomleft = QRect(QPoint(0, part2) * factor, corner);
 	p.drawPixmap(
@@ -633,59 +777,71 @@ void SeparatePanel::paintShadowBorder(Painter &p) const {
 		_borderParts,
 		bottomright);
 
-	const auto left = QRect(
-		QPoint(0, part1) * factor,
-		QSize(_padding.left(), part2 - part1) * factor);
-	p.drawPixmap(
-		QRect(0, part1, _padding.left(), height() - 2 * part1),
-		_borderParts,
-		left);
-
-	const auto top = QRect(
-		QPoint(part1, 0) * factor,
-		QSize(part2 - part1, _padding.top() + st::callRadius) * factor);
-	p.drawPixmap(
-		QRect(
-			part1,
-			0,
-			width() - 2 * part1,
-			_padding.top() + st::callRadius),
-		_borderParts,
-		top);
-
-	const auto right = QRect(
-		QPoint(size - _padding.right(), part1) * factor,
-		QSize(_padding.right(), part2 - part1) * factor);
-	p.drawPixmap(
-		QRect(
-			width() - _padding.right(),
-			part1,
-			_padding.right(),
-			height() - 2 * part1),
-		_borderParts,
-		right);
-
 	const auto bottom = QRect(
-		QPoint(part1, size - _padding.bottom() - st::callRadius) * factor,
-		QSize(part2 - part1, _padding.bottom() + st::callRadius) * factor);
+		QPoint(part1, size - _padding.bottom() - radius) * factor,
+		QSize(part2 - part1, _padding.bottom() + radius) * factor);
 	p.drawPixmap(
 		QRect(
 			part1,
-			height() - _padding.bottom() - st::callRadius,
+			height() - _padding.bottom() - radius,
 			width() - 2 * part1,
-			_padding.bottom() + st::callRadius),
+			_padding.bottom() + radius),
 		_borderParts,
 		bottom);
 
-	p.fillRect(
-		_padding.left(),
-		_padding.top() + st::callRadius,
-		width() - _padding.left() - _padding.right(),
-		height() - _padding.top() - _padding.bottom() - 2 * st::callRadius,
-		st::windowBg);
+	const auto fillLeft = [&](int from, int till, const auto &parts) {
+		const auto left = QRect(
+			QPoint(0, part1) * factor,
+			QSize(_padding.left(), part2 - part1) * factor);
+		p.drawPixmap(
+			QRect(0, from, _padding.left(), till - from),
+			parts,
+			left);
+	};
+	const auto fillRight = [&](int from, int till, const auto &parts) {
+		const auto right = QRect(
+			QPoint(size - _padding.right(), part1) * factor,
+			QSize(_padding.right(), part2 - part1) * factor);
+		p.drawPixmap(
+			QRect(
+				width() - _padding.right(),
+				from,
+				_padding.right(),
+				till - from),
+			parts,
+			right);
+	};
+	const auto fillBody = [&](int from, int till, QColor color) {
+		p.fillRect(
+			_padding.left(),
+			from,
+			width() - _padding.left() - _padding.right(),
+			till - from,
+			color);
+	};
+	const auto bg = st::windowBg->c;
+	if (_titleOverrideColor) {
+		const auto niceOverscroll = ::Platform::IsMac();
+		const auto top = niceOverscroll
+			? (height() / 2)
+			: (_padding.top() + _titleHeight);
+		fillLeft(part1, top, _titleOverrideBorderParts);
+		fillLeft(top, height() - part1, _borderParts);
+		fillRight(part1, top, _titleOverrideBorderParts);
+		fillRight(top, height() - part1, _borderParts);
+		fillBody(_padding.top() + radius, top, *_titleOverrideColor);
+		fillBody(top, height() - _padding.bottom() - radius, bg);
+	} else {
+		fillLeft(part1, height() - part1, _borderParts);
+		fillRight(part1, height() - part1, _borderParts);
+		fillBody(
+			_padding.top() + radius,
+			height() - _padding.bottom() - radius,
+			bg);
+	}
 }
 
-void SeparatePanel::paintOpaqueBorder(Painter &p) const {
+void SeparatePanel::paintOpaqueBorder(QPainter &p) const {
 	const auto border = st::windowShadowFgFallback;
 	p.fillRect(0, 0, width(), _padding.top(), border);
 	p.fillRect(
@@ -709,12 +865,22 @@ void SeparatePanel::paintOpaqueBorder(Painter &p) const {
 		_padding.bottom(),
 		border);
 
-	p.fillRect(
-		_padding.left(),
-		_padding.top(),
-		width() - _padding.left() - _padding.right(),
-		height() - _padding.top() - _padding.bottom(),
-		st::windowBg);
+	const auto fillBody = [&](int from, int till, QColor color) {
+		p.fillRect(
+			_padding.left(),
+			from,
+			width() - _padding.left() - _padding.right(),
+			till - from,
+			color);
+	};
+	const auto bg = st::windowBg->c;
+	if (_titleOverrideColor) {
+		const auto half = height() / 2;
+		fillBody(_padding.top(), half, *_titleOverrideColor);
+		fillBody(half, height() - _padding.bottom(), bg);
+	} else {
+		fillBody(_padding.top(), height() - _padding.bottom(), bg);
+	}
 }
 
 void SeparatePanel::closeEvent(QCloseEvent *e) {
@@ -732,6 +898,10 @@ void SeparatePanel::mousePressEvent(QMouseEvent *e) {
 		if (dragArea.contains(e->pos())) {
 			const auto dragViaSystem = [&] {
 				if (windowHandle()->startSystemMove()) {
+					SendSynteticMouseEvent(
+						this,
+						QEvent::MouseButtonRelease,
+						Qt::LeftButton);
 					return true;
 				}
 				return false;
@@ -766,11 +936,11 @@ void SeparatePanel::mouseReleaseEvent(QMouseEvent *e) {
 }
 
 void SeparatePanel::leaveEventHook(QEvent *e) {
-	Ui::Tooltip::Hide();
+	Tooltip::Hide();
 }
 
 void SeparatePanel::leaveToChildEvent(QEvent *e, QWidget *child) {
-	Ui::Tooltip::Hide();
+	Tooltip::Hide();
 }
 
 } // namespace Ui

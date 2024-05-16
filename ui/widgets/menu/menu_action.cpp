@@ -82,7 +82,7 @@ void Action::paintEvent(QPaintEvent *e) {
 	paint(p);
 }
 
-void Action::paintBackground(Painter &p, bool selected) {
+void Action::paintBackground(QPainter &p, bool selected) {
 	if (selected && _st.itemBgOver->c.alpha() < 255) {
 		p.fillRect(0, 0, width(), _height, _st.itemBg);
 	}
@@ -113,7 +113,8 @@ void Action::paint(Painter &p) {
 	p.setPen(selected ? _st.itemFgOver : (enabled ? _st.itemFg : _st.itemFgDisabled));
 	paintText(p);
 	if (hasSubmenu()) {
-		const auto left = width() - _st.itemPadding.right() - _st.arrow.width();
+		const auto skip = _st.itemRightSkip;
+		const auto left = width() - skip - _st.arrow.width();
 		const auto top = (_height - _st.arrow.height()) / 2;
 		if (enabled) {
 			_st.arrow.paint(p, left, top, width());
@@ -159,14 +160,14 @@ void Action::processAction() {
 	const auto &padding = _st.itemPadding;
 
 	const auto additionalWidth = hasSubmenu()
-		? padding.right() + _st.arrow.width()
+		? (_st.itemRightSkip + _st.arrow.width())
 		: (!actionShortcut.isEmpty())
-		? (padding.right() + _st.itemStyle.font->width(actionShortcut))
+		? (_st.itemRightSkip + _st.itemStyle.font->width(actionShortcut))
 		: 0;
 	const auto goodWidth = padding.left()
 		+ textWidth
-		+ padding.right()
-		+ additionalWidth;
+		+ additionalWidth
+		+ padding.right();
 
 	const auto w = std::clamp(goodWidth, _st.widthMin, _st.widthMax);
 	_textWidth = w - (goodWidth - textWidth);
@@ -188,7 +189,7 @@ QPoint Action::prepareRippleStartPosition() const {
 }
 
 QImage Action::prepareRippleMask() const {
-	return Ui::RippleAnimation::rectMask(size());
+	return Ui::RippleAnimation::RectMask(size());
 }
 
 int Action::contentHeight() const {

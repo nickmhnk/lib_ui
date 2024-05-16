@@ -9,8 +9,11 @@
 #include "ui/effects/ripple_animation.h"
 #include "ui/basic_click_handlers.h"
 #include "ui/ui_utility.h"
+#include "ui/painter.h"
+#include "styles/palette.h"
 
 #include <QtGui/QtEvents>
+#include <QtCore/QtMath>
 
 namespace Ui {
 namespace {
@@ -96,7 +99,7 @@ void ToggleView::setStyle(const style::Toggle &st) {
 	_st = &st;
 }
 
-void ToggleView::paint(Painter &p, int left, int top, int outerWidth) {
+void ToggleView::paint(QPainter &p, int left, int top, int outerWidth) {
 	left += _st->border;
 	top += _st->border;
 
@@ -120,7 +123,7 @@ void ToggleView::paint(Painter &p, int left, int top, int outerWidth) {
 	p.setBrush(anim::brush(_st->untoggledBg, _st->toggledBg, toggled));
 	p.drawEllipse(fgRect);
 
-	if (_st->xsize > 0) {
+	if (_locked || _st->xsize > 0) {
 		p.setPen(Qt::NoPen);
 		p.setBrush(fgBrush);
 		if (_locked) {
@@ -132,12 +135,11 @@ void ToggleView::paint(Painter &p, int left, int top, int outerWidth) {
 	}
 }
 
-void ToggleView::paintXV(Painter &p, int left, int top, int outerWidth, float64 toggled, const QBrush &brush) {
+void ToggleView::paintXV(QPainter &p, int left, int top, int outerWidth, float64 toggled, const QBrush &brush) {
 	Expects(_st->vsize > 0);
 	Expects(_st->stroke > 0);
 
-	static const auto sqrt2 = sqrt(2.);
-	const auto stroke = (0. + _st->stroke) / sqrt2;
+	const auto stroke = (0. + _st->stroke) / M_SQRT2;
 	if (toggled < 1) {
 		// Just X or X->V.
 		const auto xSize = 0. + _st->xsize;
@@ -221,7 +223,7 @@ QSize ToggleView::rippleSize() const {
 
 QImage ToggleView::prepareRippleMask() const {
 	auto size = rippleSize();
-	return RippleAnimation::roundRectMask(size, size.height() / 2);
+	return RippleAnimation::RoundRectMask(size, size.height() / 2);
 }
 
 bool ToggleView::checkRippleStartPosition(QPoint position) const {
@@ -247,7 +249,7 @@ void CheckView::setStyle(const style::Check &st) {
 	_st = &st;
 }
 
-void CheckView::paint(Painter &p, int left, int top, int outerWidth) {
+void CheckView::paint(QPainter &p, int left, int top, int outerWidth) {
 	auto toggled = currentAnimationValue();
 	auto pen = _untoggledOverride
 		? anim::pen(*_untoggledOverride, _st->toggledFg, toggled)
@@ -276,7 +278,7 @@ QSize CheckView::rippleSize() const {
 }
 
 QImage CheckView::prepareRippleMask() const {
-	return RippleAnimation::ellipseMask(rippleSize());
+	return RippleAnimation::EllipseMask(rippleSize());
 }
 
 bool CheckView::checkRippleStartPosition(QPoint position) const {
@@ -287,6 +289,47 @@ void CheckView::setUntoggledOverride(
 		std::optional<QColor> untoggledOverride) {
 	_untoggledOverride = untoggledOverride;
 	update();
+}
+
+Fn<void()> CheckView::PrepareNonToggledError(
+		not_null<CheckView*> view,
+		rpl::lifetime &lifetime) {
+	struct State {
+		bool error = false;
+		Ui::Animations::Simple errorAnimation;
+	};
+	const auto state = lifetime.make_state<State>();
+
+	view->checkedChanges(
+	) | rpl::filter([=](bool checked) {
+		return checked;
+	}) | rpl::start_with_next([=] {
+		state->error = false;
+		view->setUntoggledOverride(std::nullopt);
+	}, lifetime);
+
+	return [=] {
+		const auto callback = [=] {
+			const auto error = state->errorAnimation.value(
+				state->error ? 1. : 0.);
+			if (error == 0.) {
+				view->setUntoggledOverride(std::nullopt);
+			} else {
+				const auto color = anim::color(
+					st::defaultCheck.untoggledFg,
+					st::boxTextFgError,
+					error);
+				view->setUntoggledOverride(color);
+			}
+		};
+		state->error = true;
+		state->errorAnimation.stop();
+		state->errorAnimation.start(
+			callback,
+			0.,
+			1.,
+			st::defaultCheck.duration);
+	};
 }
 
 RadioView::RadioView(
@@ -305,7 +348,7 @@ void RadioView::setStyle(const style::Radio &st) {
 	_st = &st;
 }
 
-void RadioView::paint(Painter &p, int left, int top, int outerWidth) {
+void RadioView::paint(QPainter &p, int left, int top, int outerWidth) {
 	PainterHighQualityEnabler hq(p);
 
 	auto toggled = currentAnimationValue();
@@ -355,7 +398,7 @@ QSize RadioView::rippleSize() const {
 }
 
 QImage RadioView::prepareRippleMask() const {
-	return RippleAnimation::ellipseMask(rippleSize());
+	return RippleAnimation::EllipseMask(rippleSize());
 }
 
 bool RadioView::checkRippleStartPosition(QPoint position) const {
@@ -501,7 +544,7 @@ int Checkbox::countTextMinWidth() const {
 		+ _st.textPosition.x();
 	return (_st.width > 0)
 		? std::max(_st.width - leftSkip, 1)
-		: QFIXED_MAX;
+		: kQFixedMax;
 }
 
 QRect Checkbox::checkRect() const {
@@ -544,8 +587,8 @@ void Checkbox::setTextBreakEverywhere(bool allow) {
 	_textBreakEverywhere = allow;
 }
 
-void Checkbox::setLink(uint16 lnkIndex, const ClickHandlerPtr &lnk) {
-	_text.setLink(lnkIndex, lnk);
+void Checkbox::setLink(uint16 index, const ClickHandlerPtr &lnk) {
+	_text.setLink(index, lnk);
 }
 
 void Checkbox::setLinksTrusted() {
@@ -635,12 +678,13 @@ void Checkbox::paintEvent(QPaintEvent *e) {
 
 	const auto alignLeft = (_checkAlignment & Qt::AlignLeft);
 	const auto alignRight = (_checkAlignment & Qt::AlignRight);
+	const auto centered = ((_checkAlignment & Qt::AlignHCenter) != 0);
 	const auto textSkip = _st.checkPosition.x()
 		+ check.width()
 		+ _st.textPosition.x();
-	const auto availableTextWidth = (alignLeft || alignRight)
-		? std::max(width() - textSkip, 1)
-		: std::max(width() - _st.margin.left() - _st.margin.right(), 1);
+	const auto availableTextWidth = centered
+		? std::max(width() - _st.margin.left() - _st.margin.right(), 1)
+		: std::max(width() - textSkip, 1);
 	const auto textTop = _st.margin.top() + _st.textPosition.y();
 
 	p.setPen(anim::pen(_st.textFg, _st.textFgActive, active));
@@ -763,8 +807,10 @@ Text::StateResult Checkbox::getTextState(const QPoint &m) const {
 		+ _st.textPosition.x();
 	const auto availableTextWidth = std::max(width() - textSkip, 1);
 	const auto textTop = _st.margin.top() + _st.textPosition.y();
+	auto request = Ui::Text::StateRequestElided();
+	request.lines = _allowTextLines;
 	return !_allowTextLines
-		? _text.getStateElided(
+		? _text.getState(
 			m - QPoint(textSkip, textTop),
 			availableTextWidth,
 			{})
@@ -772,7 +818,7 @@ Text::StateResult Checkbox::getTextState(const QPoint &m) const {
 			m - QPoint(textSkip, textTop),
 			availableTextWidth,
 			width(),
-			{});
+			request);
 }
 
 QPixmap Checkbox::grabCheckCache() const {
@@ -821,12 +867,13 @@ int Checkbox::resizeGetHeight(int newWidth) {
 	if (!centered && _allowTextLines == 1) {
 		return result;
 	}
-	const auto leftSkip = _st.checkPosition.x()
+	const auto textSkip = _st.checkPosition.x()
 		+ checkRect().width()
 		+ _st.textPosition.x();
+	const auto fullWidth = _st.margin.left() + newWidth + _st.margin.right();
 	const auto availableTextWidth = centered
-		? (newWidth - _st.margin.left() - _st.margin.right())
-		: std::max(width() - leftSkip, 1);
+		? std::max(newWidth, 1)
+		: std::max(fullWidth - textSkip, 1);
 	const auto textHeight = _text.countHeight(availableTextWidth);
 	const auto textBottom = _st.textPosition.y()
 		+ (_allowTextLines
@@ -860,9 +907,23 @@ void RadiobuttonGroup::setValue(int value) {
 	for (const auto button : _buttons) {
 		button->handleNewGroupValue(_value);
 	}
-	if (const auto callback = _changedCallback) {
-		callback(_value);
+	const auto guard = weak_from_this();
+	_changes.fire_copy(value);
+	if (guard.lock()) {
+		if (const auto callback = _changedCallback) {
+			callback(_value);
+		}
 	}
+}
+
+void RadiobuttonGroup::registerButton(Radiobutton *button) {
+	if (!base::contains(_buttons, button)) {
+		_buttons.push_back(button);
+	}
+}
+
+void RadiobuttonGroup::unregisterButton(Radiobutton *button) {
+	_buttons.erase(ranges::remove(_buttons, button), _buttons.end());
 }
 
 Radiobutton::Radiobutton(
@@ -880,7 +941,7 @@ Radiobutton::Radiobutton(
 	st,
 	std::make_unique<RadioView>(
 		radioSt,
-		(group->hasValue() && group->value() == value))) {
+		(group->hasValue() && group->current() == value))) {
 }
 
 Radiobutton::Radiobutton(
@@ -899,7 +960,7 @@ Radiobutton::Radiobutton(
 , _value(value) {
 	using namespace rpl::mappers;
 
-	checkbox()->setChecked(group->hasValue() && group->value() == value);
+	checkbox()->setChecked(group->hasValue() && group->current() == value);
 	_group->registerButton(this);
 	checkbox()->checkedChanges(
 	) | rpl::filter(

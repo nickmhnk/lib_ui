@@ -1,13 +1,16 @@
-/*
-This file is part of Telegram Desktop,
-the official desktop application for the Telegram messaging service.
-
-For license and copyright information please follow this link:
-https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
-*/
+// This file is part of Desktop App Toolkit,
+// a set of libraries for developing nice desktop applications.
+//
+// For license and copyright information please follow this link:
+// https://github.com/desktop-app/legal/blob/master/LEGAL
+//
 #pragma once
 
 #include "ui/style/style_core.h"
+
+namespace style {
+struct MenuSeparator;
+} // namespace style
 
 namespace Ui {
 class PopupMenu;
@@ -21,7 +24,9 @@ public:
 		QString text;
 		Fn<void()> handler;
 		const style::icon *icon;
+		const style::MenuSeparator *separatorSt = nullptr;
 		Fn<void(not_null<Ui::PopupMenu*>)> fillSubmenu;
+		int addTopShift = 0;
 		bool isSeparator = false;
 		bool isAttention = false;
 	};

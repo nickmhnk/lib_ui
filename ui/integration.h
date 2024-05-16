@@ -20,6 +20,7 @@ class QVariant;
 
 struct TextParseOptions;
 class ClickHandler;
+struct ClickContext;
 struct EntityLinkData;
 
 namespace Ui {
@@ -49,7 +50,6 @@ public:
 	virtual void activationFromTopPanel();
 
 	[[nodiscard]] virtual bool screenIsLocked();
-	[[nodiscard]] virtual QString timeFormat();
 
 	[[nodiscard]] virtual std::shared_ptr<ClickHandler> createLinkHandler(
 		const EntityLinkData &data,
@@ -57,12 +57,18 @@ public:
 	[[nodiscard]] virtual bool handleUrlClick(
 		const QString &url,
 		const QVariant &context);
+	[[nodiscard]] virtual bool copyPreOnClick(const QVariant &context);
 	[[nodiscard]] virtual QString convertTagToMimeTag(const QString &tagId);
 	[[nodiscard]] virtual const Emoji::One *defaultEmojiVariant(
 		const Emoji::One *emoji);
 	[[nodiscard]] virtual auto createCustomEmoji(
 		const QString &data,
 		const std::any &context) -> std::unique_ptr<Text::CustomEmoji>;
+	[[nodiscard]] virtual Fn<void()> createSpoilerRepaint(
+		const std::any &context);
+	[[nodiscard]] virtual bool allowClickHandlerActivation(
+		const std::shared_ptr<ClickHandler> &handler,
+		const ClickContext &context);
 
 	[[nodiscard]] virtual rpl::producer<> forcePopupMenuHideRequests();
 
@@ -78,6 +84,7 @@ public:
 	[[nodiscard]] virtual QString phraseFormattingItalic();
 	[[nodiscard]] virtual QString phraseFormattingUnderline();
 	[[nodiscard]] virtual QString phraseFormattingStrikeOut();
+	[[nodiscard]] virtual QString phraseFormattingBlockquote();
 	[[nodiscard]] virtual QString phraseFormattingMonospace();
 	[[nodiscard]] virtual QString phraseFormattingSpoiler();
 	[[nodiscard]] virtual QString phraseButtonOk();
@@ -86,11 +93,13 @@ public:
 	[[nodiscard]] virtual QString phrasePanelCloseWarning();
 	[[nodiscard]] virtual QString phrasePanelCloseUnsaved();
 	[[nodiscard]] virtual QString phrasePanelCloseAnyway();
-#if 0 // disabled for now
 	[[nodiscard]] virtual QString phraseBotSharePhone();
 	[[nodiscard]] virtual QString phraseBotSharePhoneTitle();
 	[[nodiscard]] virtual QString phraseBotSharePhoneConfirm();
-#endif
+	[[nodiscard]] virtual QString phraseBotAllowWrite();
+	[[nodiscard]] virtual QString phraseBotAllowWriteTitle();
+	[[nodiscard]] virtual QString phraseBotAllowWriteConfirm();
+	[[nodiscard]] virtual QString phraseQuoteHeaderCopy();
 
 };
 

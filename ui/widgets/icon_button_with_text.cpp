@@ -1,10 +1,9 @@
-/*
-This file is part of Telegram Desktop,
-the official desktop application for the Telegram messaging service.
-
-For license and copyright information please follow this link:
-https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
-*/
+// This file is part of Desktop App Toolkit,
+// a set of libraries for developing nice desktop applications.
+//
+// For license and copyright information please follow this link:
+// https://github.com/desktop-app/legal/blob/master/LEGAL
+//
 #include "ui/widgets/icon_button_with_text.h"
 
 namespace Ui {
@@ -20,13 +19,13 @@ void IconButtonWithText::paintEvent(QPaintEvent *e) {
 	IconButton::paintEvent(e);
 
 	const auto r = rect() - _st.textPadding;
+	const auto overIconOpacity = IconButton::iconOverOpacity();
 
-	Painter p(this);
+	auto p = QPainter(this);
 	p.setFont(_st.font);
-	p.setPen(_st.textFg);
+	p.setPen((overIconOpacity == 1.) ? _st.textFgOver : _st.textFg);
 	p.drawText(r, _text, _st.textAlign);
 
-	const auto overIconOpacity = IconButton::iconOverOpacity();
 	if (overIconOpacity > 0. && overIconOpacity < 1.) {
 		p.setPen(_st.textFgOver);
 		p.setOpacity(overIconOpacity);

@@ -154,6 +154,18 @@ void ForceFullRepaint(not_null<QWidget*> widget) {
 	refresher->show();
 }
 
+void ForceFullRepaintSync(not_null<QWidget*> widget) {
+	const auto wm = widget->testAttribute(Qt::WA_Mapped);
+	const auto wv = widget->testAttribute(Qt::WA_WState_Visible);
+	if (!wm) widget->setAttribute(Qt::WA_Mapped, true);
+	if (!wv) widget->setAttribute(Qt::WA_WState_Visible, true);
+	ForceFullRepaint(widget);
+	QEvent e(QEvent::UpdateRequest);
+	QGuiApplication::sendEvent(widget, &e);
+	if (!wm) widget->setAttribute(Qt::WA_Mapped, false);
+	if (!wv) widget->setAttribute(Qt::WA_WState_Visible, false);
+}
+
 void PostponeCall(FnMut<void()> &&callable) {
 	Integration::Instance().postponeCall(std::move(callable));
 }
@@ -166,7 +178,9 @@ void SendSynteticMouseEvent(QWidget *widget, QEvent::Type type, Qt::MouseButton 
 			, localPoint
 			, globalPoint
 			, button
-			, QGuiApplication::mouseButtons() | button
+			, type == QEvent::MouseButtonRelease
+				? QGuiApplication::mouseButtons() ^ button
+				: QGuiApplication::mouseButtons() | button
 			, QGuiApplication::keyboardModifiers()
 			, Qt::MouseEventSynthesizedByApplication
 		);
@@ -220,6 +234,28 @@ int WheelDirection(not_null<QWheelEvent*> e) {
 		return 0;
 	}
 	return (delta / absDelta);
+}
+
+QPoint MapFrom(
+		not_null<QWidget*> to,
+		not_null<QWidget*> from,
+		QPoint point) {
+	return (to->window() != from->window())
+		? to->mapFromGlobal(from->mapToGlobal(point))
+		: to->mapFrom(to->window(), from->mapTo(from->window(), point));
+}
+
+[[nodiscard]] QRect MapFrom(
+		not_null<QWidget*> to,
+		not_null<QWidget*> from,
+		QRect rect) {
+	return { MapFrom(to, from, rect.topLeft()), rect.size() };
+}
+
+void SetGeometryWithPossibleScreenChange(
+		not_null<QWidget*> widget,
+		QRect geometry) {
+	Platform::SetGeometryWithPossibleScreenChange(widget, geometry);
 }
 
 } // namespace Ui

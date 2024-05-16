@@ -37,6 +37,8 @@ protected:
 	void onStateChanged(State was, StateChangeSource source) override;
 
 private:
+	void resizeToText();
+
 	const style::LinkButton &_st;
 	QString _text;
 	int _textWidth = 0;
@@ -184,6 +186,8 @@ class IconButton : public RippleButton {
 public:
 	IconButton(QWidget *parent, const style::IconButton &st);
 
+	[[nodiscard]] const style::IconButton &st() const;
+
 	// Pass nullptr to restore the default icon.
 	void setIconOverride(const style::icon *iconOverride, const style::icon *iconOverOverride = nullptr);
 	void setRippleColorOverride(const style::color *colorOverride);
@@ -270,10 +274,14 @@ public:
 	rpl::producer<bool> toggledChanges() const;
 	rpl::producer<bool> toggledValue() const;
 
+	void setToggleLocked(bool locked);
 	void setColorOverride(std::optional<QColor> textColorOverride);
 	void setPaddingOverride(style::margins padding);
 
 	[[nodiscard]] const style::SettingsButton &st() const;
+	[[nodiscard]] int fullTextWidth() const;
+
+	void finishAnimating();
 
 protected:
 	int resizeGetHeight(int newWidth) override;
@@ -286,6 +294,8 @@ protected:
 	void paintBg(Painter &p, const QRect &rect, bool over) const;
 	void paintText(Painter &p, bool over, int outerw) const;
 	void paintToggle(Painter &p, int outerw) const;
+
+	[[nodiscard]] QRect maybeToggleRect() const;
 
 private:
 	void setText(QString &&text);

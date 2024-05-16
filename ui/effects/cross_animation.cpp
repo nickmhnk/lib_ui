@@ -7,6 +7,7 @@
 #include "ui/effects/cross_animation.h"
 
 #include "ui/effects/animation_value.h"
+#include "ui/arc_angles.h"
 #include "ui/painter.h"
 
 #include <QtCore/QtMath>
@@ -17,7 +18,6 @@ namespace {
 
 constexpr auto kPointCount = 12;
 constexpr auto kStaticLoadingValue = float64(-666);
-constexpr auto kFullArcLength = 360 * 16;
 
 
 //
@@ -99,7 +99,7 @@ void transformLoadingCross(float64 loading, std::array<QPointF, kPointCount> &po
 } // namespace
 
 void CrossAnimation::paintStaticLoading(
-		Painter &p,
+		QPainter &p,
 		const style::CrossAnimation &st,
 		style::color color,
 		int x,
@@ -110,7 +110,7 @@ void CrossAnimation::paintStaticLoading(
 }
 
 void CrossAnimation::paint(
-		Painter &p,
+		QPainter &p,
 		const style::CrossAnimation &st,
 		style::color color,
 		int x,
@@ -122,7 +122,6 @@ void CrossAnimation::paint(
 
 	const auto stroke = style::ConvertScaleExact(st.stroke);
 
-	const auto sqrt2 = sqrt(2.);
 	const auto deleteScale = shown + st.minScale * (1. - shown);
 	const auto deleteSkip = (deleteScale * st.skip)
 		+ (1. - deleteScale) * (st.size / 2);
@@ -131,7 +130,7 @@ void CrossAnimation::paint(
 	const auto deleteTop = y + deleteSkip + 0.;
 	const auto deleteWidth = st.size - 2 * deleteSkip;
 	const auto deleteHeight = st.size - 2 * deleteSkip;
-	const auto deleteStroke = stroke / sqrt2;
+	const auto deleteStroke = stroke / M_SQRT2;
 	std::array<QPointF, kPointCount> pathDelete = { {
 		{ deleteLeft, deleteTop + deleteStroke },
 		{ deleteLeft + deleteStroke, deleteTop },
@@ -149,12 +148,12 @@ void CrossAnimation::paint(
 	auto pathDeleteSize = kPointCount;
 
 	const auto staticLoading = (loading == kStaticLoadingValue);
-	auto loadingArcLength = staticLoading ? kFullArcLength : 0;
+	auto loadingArcLength = staticLoading ? arc::kFullLength : 0;
 	if (loading > 0.) {
 		transformLoadingCross(loading, pathDelete, pathDeleteSize);
 
 		auto loadingArc = (loading >= 0.5) ? (loading - 1.) : loading;
-		loadingArcLength = qRound(-loadingArc * 2 * kFullArcLength);
+		loadingArcLength = qRound(-loadingArc * 2 * arc::kFullLength);
 	}
 
 	if (!staticLoading) {
@@ -180,14 +179,14 @@ void CrossAnimation::paint(
 		p.fillPath(path, color);
 	}
 	if (loadingArcLength != 0) {
-		auto roundSkip = (st.size * (1 - sqrt2) + 2 * sqrt2 * deleteSkip + stroke) / 2;
+		auto roundSkip = (st.size * (1 - M_SQRT2) + 2 * M_SQRT2 * deleteSkip + stroke) / 2;
 		auto roundPart = QRectF(x + roundSkip, y + roundSkip, st.size - 2 * roundSkip, st.size - 2 * roundSkip);
 		if (staticLoading) {
 			anim::DrawStaticLoading(p, roundPart, stroke, color);
 		} else {
-			auto loadingArcStart = kFullArcLength / 8;
+			auto loadingArcStart = arc::kQuarterLength / 2;
 			if (shown < 1.) {
-				loadingArcStart -= qRound(-(shown - 1.) * kFullArcLength / 4.);
+				loadingArcStart -= qRound(-(shown - 1.) * arc::kQuarterLength);
 			}
 			if (loadingArcLength < 0) {
 				loadingArcStart += loadingArcLength;

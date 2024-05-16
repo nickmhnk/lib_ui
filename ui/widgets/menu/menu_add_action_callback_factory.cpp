@@ -1,10 +1,9 @@
-/*
-This file is part of Telegram Desktop,
-the official desktop application for the Telegram messaging service.
-
-For license and copyright information please follow this link:
-https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
-*/
+// This file is part of Desktop App Toolkit,
+// a set of libraries for developing nice desktop applications.
+//
+// For license and copyright information please follow this link:
+// https://github.com/desktop-app/legal/blob/master/LEGAL
+//
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 
 #include "ui/widgets/menu/menu_add_action_callback.h"
@@ -14,10 +13,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Ui::Menu {
 
-MenuCallback CreateAddActionCallback(
-		const base::unique_qptr<Ui::PopupMenu> &menu) {
-	return MenuCallback([&](MenuCallback::Args a) {
-		if (a.fillSubmenu) {
+MenuCallback CreateAddActionCallback(not_null<Ui::PopupMenu*> menu) {
+	return MenuCallback([=](MenuCallback::Args a) -> QAction* {
+		if (a.addTopShift) {
+			menu->setTopShift(a.addTopShift);
+			return nullptr;
+		} else if (a.fillSubmenu) {
 			const auto action = menu->addAction(
 				a.text,
 				std::move(a.handler),
@@ -26,8 +27,8 @@ MenuCallback CreateAddActionCallback(
 			action->setMenu(Ui::CreateChild<QMenu>(menu->menu().get()));
 			a.fillSubmenu(menu->ensureSubmenu(action, menu->st()));
 			return action;
-		} else if (a.isSeparator) {
-			return menu->addSeparator();
+		} else if (a.separatorSt || a.isSeparator) {
+			return menu->addSeparator(a.separatorSt);
 		} else if (a.isAttention) {
 			return menu->addAction(base::make_unique_q<Ui::Menu::Action>(
 				menu,
@@ -41,6 +42,11 @@ MenuCallback CreateAddActionCallback(
 		}
 		return menu->addAction(a.text, std::move(a.handler), a.icon);
 	});
+}
+
+MenuCallback CreateAddActionCallback(
+		const base::unique_qptr<Ui::PopupMenu> &menu) {
+	return CreateAddActionCallback(menu.get());
 }
 
 } // namespace Ui::Menu

@@ -26,7 +26,7 @@ class CrossFadeAnimation {
 public:
 	struct Data {
 		QImage full;
-		QVector<int> lineWidths;
+		std::vector<int> lineWidths;
 		QPoint position;
 		style::align align;
 		style::font font;
@@ -94,7 +94,6 @@ private:
 };
 
 class FlatLabel : public RpWidget, public ClickHandlerHost {
-
 public:
 	FlatLabel(
 		QWidget *parent,
@@ -118,25 +117,53 @@ public:
 		const style::FlatLabel &st = st::defaultFlatLabel,
 		const style::PopupMenu &stMenu = st::defaultPopupMenu);
 
+	[[nodiscard]] const style::FlatLabel &st() const {
+		return _st;
+	}
+
 	void setOpacity(float64 o);
 	void setTextColorOverride(std::optional<QColor> color);
 
 	void setText(const QString &text);
-	void setMarkedText(const TextWithEntities &textWithEntities);
+	void setMarkedText(
+		const TextWithEntities &textWithEntities,
+		const std::any &context = {});
 	void setSelectable(bool selectable);
 	void setDoubleClickSelectsParagraph(bool doubleClickSelectsParagraph);
 	void setContextCopyText(const QString &copyText);
 	void setBreakEverywhere(bool breakEverywhere);
 	void setTryMakeSimilarLines(bool tryMakeSimilarLines);
+	enum class WhichAnimationsPaused {
+		None,
+		CustomEmoji,
+		Spoiler,
+		All,
+	};
+	void setAnimationsPausedCallback(Fn<WhichAnimationsPaused()> callback) {
+		_animationsPausedCallback = std::move(callback);
+	}
 
+	[[nodiscard]] int textMaxWidth() const;
 	int naturalWidth() const override;
 	QMargins getMargins() const override;
 
-	void setLink(uint16 lnkIndex, const ClickHandlerPtr &lnk);
+	void setLink(uint16 index, const ClickHandlerPtr &lnk);
 	void setLinksTrusted();
 
 	using ClickHandlerFilter = Fn<bool(const ClickHandlerPtr&, Qt::MouseButton)>;
 	void setClickHandlerFilter(ClickHandlerFilter &&filter);
+	void overrideLinkClickHandler(Fn<void()> handler);
+	void overrideLinkClickHandler(Fn<void(QString url)> handler);
+
+	struct ContextMenuRequest {
+		not_null<PopupMenu*> menu;
+		ClickHandlerPtr link;
+		TextSelection selection;
+		bool uponSelection = false;
+		bool fullSelection = false;
+	};
+	void setContextMenuHook(Fn<void(ContextMenuRequest)> hook);
+	void fillContextMenu(ContextMenuRequest request);
 
 	// ClickHandlerHost interface
 	void clickHandlerActiveChanged(const ClickHandlerPtr &action, bool active) override;
@@ -233,9 +260,11 @@ private:
 	base::Timer _trippleClickTimer;
 
 	base::unique_qptr<PopupMenu> _contextMenu;
+	Fn<void(ContextMenuRequest)> _contextMenuHook;
 	QString _contextCopyText;
 
 	ClickHandlerFilter _clickHandlerFilter;
+	Fn<WhichAnimationsPaused()> _animationsPausedCallback;
 
 	// text selection and context menu by touch support (at least Windows Surface tablets)
 	bool _touchSelect = false;
@@ -245,11 +274,11 @@ private:
 
 };
 
-class DividerLabel : public PaddingWrap<FlatLabel> {
+class DividerLabel : public PaddingWrap<> {
 public:
 	DividerLabel(
 		QWidget *parent,
-		object_ptr<FlatLabel> &&child,
+		object_ptr<RpWidget> &&child,
 		const style::margins &padding,
 		RectParts parts = RectPart::Top | RectPart::Bottom);
 

@@ -9,6 +9,7 @@
 #include "ui/gl/gl_detection.h"
 #include "ui/text/text_entity.h"
 #include "ui/text/text_block.h"
+#include "ui/toast/toast.h"
 #include "ui/basic_click_handlers.h"
 #include "base/platform/base_platform_info.h"
 
@@ -47,10 +48,6 @@ bool Integration::screenIsLocked() {
 	return false;
 }
 
-QString Integration::timeFormat() {
-	return u"hh:mm"_q;
-}
-
 std::shared_ptr<ClickHandler> Integration::createLinkHandler(
 		const EntityLinkData &data,
 		const std::any &context) {
@@ -76,10 +73,25 @@ std::unique_ptr<Text::CustomEmoji> Integration::createCustomEmoji(
 	return nullptr;
 }
 
+Fn<void()> Integration::createSpoilerRepaint(const std::any &context) {
+	return nullptr;
+}
+
+bool Integration::allowClickHandlerActivation(
+		const std::shared_ptr<ClickHandler> &handler,
+		const ClickContext &context) {
+	return true;
+}
+
 bool Integration::handleUrlClick(
 		const QString &url,
 		const QVariant &context) {
 	return false;
+}
+
+bool Integration::copyPreOnClick(const QVariant &context) {
+	Toast::Show(u"Code copied to clipboard."_q);
+	return true;
 }
 
 QString Integration::convertTagToMimeTag(const QString &tagId) {
@@ -142,6 +154,10 @@ QString Integration::phraseFormattingStrikeOut() {
 	return "Strike-through";
 }
 
+QString Integration::phraseFormattingBlockquote() {
+	return "Quote";
+}
+
 QString Integration::phraseFormattingMonospace() {
 	return "Monospace";
 }
@@ -174,7 +190,6 @@ QString Integration::phrasePanelCloseAnyway() {
 	return "Close anyway";
 }
 
-#if 0 // disabled for now
 QString Integration::phraseBotSharePhone() {
 	return "Do you want to share your phone number with this bot?";
 }
@@ -186,6 +201,21 @@ QString Integration::phraseBotSharePhoneTitle() {
 QString Integration::phraseBotSharePhoneConfirm() {
 	return "Share";
 }
-#endif
+
+QString Integration::phraseBotAllowWrite() {
+	return "Do you want to allow this bot to write you?";
+}
+
+QString Integration::phraseBotAllowWriteTitle() {
+	return "Allow write";
+}
+
+QString Integration::phraseBotAllowWriteConfirm() {
+	return "Allow";
+}
+
+QString Integration::phraseQuoteHeaderCopy() {
+	return "copy";
+}
 
 } // namespace Ui

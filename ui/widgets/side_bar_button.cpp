@@ -7,6 +7,7 @@
 #include "ui/widgets/side_bar_button.h"
 
 #include "ui/effects/ripple_animation.h"
+#include "ui/painter.h"
 #include "styles/style_widgets.h"
 
 #include <QtGui/QtEvents>
@@ -165,10 +166,10 @@ void SideBarButton::paintEvent(QPaintEvent *e) {
 	}
 
 	if (_lock.locked) {
-		auto lineWidths = QVector<int>();
-		lineWidths.reserve(kMaxLabelLines);
-		_text.countLineWidths(width() - 2 * _st.textSkip, &lineWidths);
-		if (lineWidths.isEmpty()) {
+		const auto lineWidths = _text.countLineWidths(
+			width() - 2 * _st.textSkip,
+			{ .reserve = kMaxLabelLines });
+		if (lineWidths.empty()) {
 			return;
 		}
 		validateLockIconCache();

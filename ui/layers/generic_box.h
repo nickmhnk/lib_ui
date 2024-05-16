@@ -38,8 +38,14 @@ public:
 	void setFocusCallback(Fn<void()> callback) {
 		_focus = callback;
 	}
+	void setInitScrollCallback(Fn<void()> callback) {
+		_initScroll = callback;
+	}
 	void setShowFinishedCallback(Fn<void()> callback) {
 		_showFinished = callback;
+	}
+	[[nodiscard]] rpl::producer<> showFinishes() const {
+		return _showFinishes.events();
 	}
 
 	[[nodiscard]] int rowsCount() const;
@@ -71,23 +77,29 @@ public:
 
 	void addSkip(int height);
 
-	void setInnerFocus() override {
-		if (_focus) {
-			_focus();
-		} else {
-			BoxContent::setInnerFocus();
-		}
+	void setMaxHeight(int maxHeight) {
+		_maxHeight = maxHeight;
 	}
-	void showFinished() override {
-		if (_showFinished) {
-			_showFinished();
-		}
+	void setMinHeight(int minHeight) {
+		_minHeight = minHeight;
 	}
+	void setScrollStyle(const style::ScrollArea &st) {
+		_scrollSt = &st;
+	}
+
+	void setInnerFocus() override;
+	void showFinished() override;
 
 	template <typename Widget>
 	not_null<Widget*> setPinnedToTopContent(object_ptr<Widget> content) {
 		return static_cast<Widget*>(
 			doSetPinnedToTopContent(std::move(content)).get());
+	}
+
+	template <typename Widget>
+	not_null<Widget*> setPinnedToBottomContent(object_ptr<Widget> content) {
+		return static_cast<Widget*>(
+			doSetPinnedToBottomContent(std::move(content)).get());
 	}
 
 	[[nodiscard]] not_null<Ui::VerticalLayout*> verticalLayout();
@@ -122,15 +134,23 @@ private:
 	void prepare() override;
 	not_null<Ui::RpWidget*> doSetPinnedToTopContent(
 		object_ptr<Ui::RpWidget> content);
+	not_null<Ui::RpWidget*> doSetPinnedToBottomContent(
+		object_ptr<Ui::RpWidget> content);
 
 	FnMut<void(not_null<GenericBox*>)> _init;
 	Fn<void()> _focus;
+	Fn<void()> _initScroll;
 	Fn<void()> _showFinished;
+	rpl::event_stream<> _showFinishes;
 	object_ptr<Ui::VerticalLayout> _owned;
 	not_null<Ui::VerticalLayout*> _content;
+	const style::ScrollArea *_scrollSt = nullptr;
 	int _width = 0;
+	int _minHeight = 0;
+	int _maxHeight = 0;
 
 	object_ptr<Ui::RpWidget> _pinnedToTopContent = { nullptr };
+	object_ptr<Ui::RpWidget> _pinnedToBottomContent = { nullptr };
 
 };
 
@@ -178,5 +198,7 @@ inline GenericBox::GenericBox(
 , _owned(this)
 , _content(_owned.data()) {
 }
+
+[[nodiscard]] rpl::producer<> BoxShowFinishes(not_null<GenericBox*> box);
 
 } // namespace Ui

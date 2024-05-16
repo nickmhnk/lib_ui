@@ -35,27 +35,44 @@ void StopShortAnimation();
 
 } // namespace internal
 
-void startManager(int scale);
-void stopManager();
+void StartManager(int scale);
+void StopManager();
 
 [[nodiscard]] rpl::producer<> PaletteChanged();
+[[nodiscard]] int PaletteVersion();
 void NotifyPaletteChanged();
 
 [[nodiscard]] rpl::producer<bool> ShortAnimationPlaying();
 
 // *outResult must be r.width() x r.height(), ARGB32_Premultiplied.
 // QRect(0, 0, src.width(), src.height()) must contain r.
-void colorizeImage(const QImage &src, QColor c, QImage *outResult, QRect srcRect = QRect(), QPoint dstPoint = QPoint(0, 0));
+void colorizeImage(
+	const QImage &src,
+	const QColor &color,
+	not_null<QImage*> outResult,
+	QRect srcRect = QRect(),
+	QPoint dstPoint = QPoint(0, 0),
+	bool useAlpha = false);
 
-inline QImage colorizeImage(const QImage &src, QColor c, QRect srcRect = QRect()) {
-	if (srcRect.isNull()) srcRect = src.rect();
-	auto result = QImage(srcRect.size(), QImage::Format_ARGB32_Premultiplied);
-	colorizeImage(src, c, &result, srcRect);
+[[nodiscard]] inline QImage colorizeImage(
+		const QImage &src,
+		const QColor &color,
+		QRect srcRect = QRect()) {
+	if (srcRect.isNull()) {
+		srcRect = src.rect();
+	}
+	auto result = QImage(
+		srcRect.size(),
+		QImage::Format_ARGB32_Premultiplied);
+	colorizeImage(src, color, &result, srcRect);
 	return result;
 }
 
-inline QImage colorizeImage(const QImage &src, const color &c, QRect srcRect = QRect()) {
-	return colorizeImage(src, c->c, srcRect);
+[[nodiscard]] inline QImage colorizeImage(
+		const QImage &src,
+		const color &color,
+		QRect srcRect = QRect()) {
+	return colorizeImage(src, color->c, srcRect);
 }
 
 [[nodiscard]] QImage TransparentPlaceholder();

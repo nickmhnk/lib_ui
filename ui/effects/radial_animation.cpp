@@ -6,16 +6,14 @@
 //
 #include "ui/effects/radial_animation.h"
 
+#include "ui/arc_angles.h"
 #include "ui/painter.h"
 #include "styles/style_widgets.h"
 
 namespace Ui {
 namespace {
 
-constexpr auto kFullArcLength = 360 * 16;
-constexpr auto kQuarterArcLength = (kFullArcLength / 4);
-constexpr auto kMinArcLength = (kFullArcLength / 360);
-constexpr auto kAlmostFullArcLength = (kFullArcLength - kMinArcLength);
+constexpr auto kFullArcLength = arc::kFullLength;
 
 } // namespace
 
@@ -23,14 +21,14 @@ const int RadialState::kFull = kFullArcLength;
 
 void RadialAnimation::start(float64 prg) {
 	_firstStart = _lastStart = _lastTime = crl::now();
-	const auto iprg = qRound(qMax(prg, 0.0001) * kAlmostFullArcLength);
-	const auto iprgstrict = qRound(prg * kAlmostFullArcLength);
+	const auto iprg = qRound(qMax(prg, 0.0001) * arc::kAlmostFullLength);
+	const auto iprgstrict = qRound(prg * arc::kAlmostFullLength);
 	_arcEnd = anim::value(iprgstrict, iprg);
 	_animation.start();
 }
 
 bool RadialAnimation::update(float64 prg, bool finished, crl::time ms) {
-	const auto iprg = qRound(qMax(prg, 0.0001) * kAlmostFullArcLength);
+	const auto iprg = qRound(qMax(prg, 0.0001) * arc::kAlmostFullLength);
 	const auto result = (iprg != qRound(_arcEnd.to()))
 		|| (_finished != finished);
 	if (_finished != finished) {
@@ -101,24 +99,36 @@ void RadialAnimation::draw(
 }
 
 RadialState RadialAnimation::computeState() const {
-	auto length = kMinArcLength + qRound(_arcEnd.current());
-	auto from = kQuarterArcLength
+	auto length = arc::kMinLength + qRound(_arcEnd.current());
+	auto from = arc::kQuarterLength
 		- length
 		- (anim::Disabled() ? 0 : qRound(_arcStart.current()));
 	if (style::RightToLeft()) {
-		from = kQuarterArcLength - (from - kQuarterArcLength) - length;
-		if (from < 0) from += kFullArcLength;
+		from = arc::kQuarterLength - (from - arc::kQuarterLength) - length;
+		if (from < 0) from += arc::kFullLength;
 	}
 	return { _opacity, from, length };
 }
 
+void InfiniteRadialAnimation::init() {
+	anim::Disables() | rpl::filter([=] {
+		return animating();
+	}) | rpl::start_with_next([=](bool disabled) {
+		if (!disabled && !_animation.animating()) {
+			_animation.start();
+		} else if (disabled && _animation.animating()) {
+			_animation.stop();
+		}
+	}, _lifetime);
+}
+
 void InfiniteRadialAnimation::start(crl::time skip) {
-	const auto now = crl::now();
-	if (_workFinished <= now && (_workFinished || !_workStarted)) {
+	if (!animating()) {
+		const auto now = crl::now();
 		_workStarted = std::max(now + _st.sineDuration - skip, crl::time(1));
 		_workFinished = 0;
 	}
-	if (!_animation.animating()) {
+	if (!anim::Disabled() && !_animation.animating()) {
 		_animation.start();
 	}
 }
@@ -213,7 +223,7 @@ RadialState InfiniteRadialAnimation::computeState() {
 	const auto now = crl::now();
 	const auto linear = kFullArcLength
 		- int(((now * kFullArcLength) / _st.linearPeriod) % kFullArcLength);
-	if (!_workStarted || (_workFinished && _workFinished <= now)) {
+	if (!animating()) {
 		const auto shown = 0.;
 		_animation.stop();
 		return {

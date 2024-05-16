@@ -7,6 +7,8 @@
 #include "ui/widgets/time_input.h"
 
 #include "ui/widgets/fields/time_part_input.h"
+#include "base/qt/qt_string_view.h"
+#include "base/invoke_queued.h"
 
 #include <QtCore/QRegularExpression>
 #include <QTime>
@@ -15,8 +17,9 @@ namespace Ui {
 namespace {
 
 QTime ValidateTime(const QString &value) {
-	const auto match = QRegularExpression(
-		"^(\\d{1,2})\\:(\\d\\d)$").match(value);
+	static const auto RegExp = QRegularExpression(
+		"^(\\d{1,2})\\:(\\d\\d)$");
+	const auto match = RegExp.match(value);
 	if (!match.hasMatch()) {
 		return QTime();
 	}
@@ -107,6 +110,10 @@ TimeInput::TimeInput(
 	_minute->erasePrevious() | rpl::start_with_next([=] {
 		erasePrevious(_hour);
 	}, lifetime());
+	_minute->jumpToPrevious() | rpl::start_with_next([=] {
+		_hour->setCursorPosition(_hour->getLastText().size());
+		_hour->setFocus();
+	}, lifetime());
 	_separator1->setAttribute(Qt::WA_TransparentForMouseEvents);
 	setMouseTracking(true);
 
@@ -146,7 +153,7 @@ void TimeInput::putNext(const object_ptr<TimePart> &field, QChar ch) {
 		field->setCursorPosition(1);
 	}
 	field->onTextEdited();
-	field->setFocus();
+	setFocusQueued(field);
 }
 
 void TimeInput::erasePrevious(const object_ptr<TimePart> &field) {
@@ -155,7 +162,37 @@ void TimeInput::erasePrevious(const object_ptr<TimePart> &field) {
 		field->setCursorPosition(text.size() - 1);
 		field->setText(text.mid(0, text.size() - 1));
 	}
-	field->setFocus();
+	setFocusQueued(field);
+}
+
+void TimeInput::setFocusQueued(const object_ptr<TimePart> &field) {
+	// There was a "Stack Overflow" crash in some input method handling.
+	//
+	// See https://github.com/telegramdesktop/tdesktop/issues/25129
+	//
+	// The stack is something like:
+	//
+	// ...
+	// QApplicationPrivate::sendMouseEvent
+	// ----
+	// QWidget::setFocus
+	// QWindow::focusObjectChanged
+	// QWindowsInputContext::setFocusObject
+	// QWindowsInputContext::reset
+	// QLineEdit::inputMethodEvent
+	// QWidgetLineControl::finishChange
+	// QLineEdit::textEdited
+	// MaskedInputField::onTextEdited
+	// TimePart::correctValue
+	// TimeInput::putNext
+	// ----
+	// QWidget::setFocus
+	// QWindow::focusObjectChanged
+	// ...
+	//
+	// So we try to break this loop by focusing the widget async.
+	const auto raw = field.data();
+	InvokeQueued(raw, [raw] { raw->setFocus(); });
 }
 
 bool TimeInput::setFocusFast() {
@@ -195,7 +232,7 @@ rpl::producer<> TimeInput::focuses() const {
 }
 
 void TimeInput::paintEvent(QPaintEvent *e) {
-	Painter p(this);
+	auto p = QPainter(this);
 
 	const auto &_st = _stDateField;
 	const auto height = _st.heightMin;

@@ -25,9 +25,7 @@ LinkButton::LinkButton(
 , _st(st)
 , _text(text)
 , _textWidth(st.font->width(_text)) {
-	resize(
-		naturalWidth(),
-		_st.padding.top() + _st.font->height + _st.padding.bottom());
+	resizeToText();
 	setCursor(style::cur_pointer);
 }
 
@@ -59,8 +57,14 @@ void LinkButton::paintEvent(QPaintEvent *e) {
 void LinkButton::setText(const QString &text) {
 	_text = text;
 	_textWidth = _st.font->width(_text);
-	resize(naturalWidth(), _st.font->height);
+	resizeToText();
 	update();
+}
+
+void LinkButton::resizeToText() {
+	resize(
+		naturalWidth(),
+		_st.padding.top() + _st.font->height + _st.padding.bottom());
 }
 
 void LinkButton::setColorOverride(std::optional<QColor> textFg) {
@@ -165,7 +169,7 @@ void RippleButton::ensureRipple() {
 }
 
 QImage RippleButton::prepareRippleMask() const {
-	return RippleAnimation::rectMask(size());
+	return RippleAnimation::RectMask(size());
 }
 
 QPoint RippleButton::prepareRippleStartPosition() const {
@@ -449,7 +453,7 @@ QImage RoundButton::prepareRippleMask() const {
 	if (_fullWidthOverride < 0) {
 		rounded = QRect(0, rounded.top(), innerWidth - _fullWidthOverride, rounded.height());
 	}
-	return RippleAnimation::roundRectMask(
+	return RippleAnimation::RoundRectMask(
 		rounded.size(),
 		(_fullRadius
 			? (rounded.height() / 2)
@@ -467,6 +471,10 @@ RoundButton::~RoundButton() = default;
 IconButton::IconButton(QWidget *parent, const style::IconButton &st) : RippleButton(parent, st.ripple)
 , _st(st) {
 	resize(_st.width, _st.height);
+}
+
+const style::IconButton &IconButton::st() const {
+	return _st;
 }
 
 void IconButton::setIconOverride(const style::icon *iconOverride, const style::icon *iconOverOverride) {
@@ -551,7 +559,7 @@ QPoint IconButton::prepareRippleStartPosition() const {
 }
 
 QImage IconButton::prepareRippleMask() const {
-	return RippleAnimation::ellipseMask(QSize(_st.rippleAreaSize, _st.rippleAreaSize));
+	return RippleAnimation::EllipseMask(QSize(_st.rippleAreaSize, _st.rippleAreaSize));
 }
 
 CrossButton::CrossButton(QWidget *parent, const style::CrossButton &st) : RippleButton(parent, st.ripple)
@@ -597,7 +605,7 @@ void CrossButton::animationCallback() {
 }
 
 void CrossButton::paintEvent(QPaintEvent *e) {
-	Painter p(this);
+	auto p = QPainter(this);
 
 	auto over = isOver();
 	auto shown = _showAnimation.value(_shown ? 1. : 0.);
@@ -684,7 +692,7 @@ QPoint CrossButton::prepareRippleStartPosition() const {
 }
 
 QImage CrossButton::prepareRippleMask() const {
-	return RippleAnimation::ellipseMask(QSize(_st.cross.size, _st.cross.size));
+	return RippleAnimation::EllipseMask(QSize(_st.cross.size, _st.cross.size));
 }
 
 SettingsButton::SettingsButton(
@@ -708,6 +716,13 @@ SettingsButton::SettingsButton(
 }
 
 SettingsButton::~SettingsButton() = default;
+
+void SettingsButton::finishAnimating() {
+	if (_toggle) {
+		_toggle->finishAnimating();
+	}
+	Ui::RippleButton::finishAnimating();
+}
 
 SettingsButton *SettingsButton::toggleOn(
 		rpl::producer<bool> &&toggled,
@@ -734,6 +749,12 @@ SettingsButton *SettingsButton::toggleOn(
 
 bool SettingsButton::toggled() const {
 	return _toggle ? _toggle->checked() : false;
+}
+
+void SettingsButton::setToggleLocked(bool locked) {
+	if (_toggle) {
+		_toggle->setLocked(locked);
+	}
 }
 
 rpl::producer<bool> SettingsButton::toggledChanges() const {
@@ -763,6 +784,10 @@ void SettingsButton::setPaddingOverride(style::margins padding) {
 
 const style::SettingsButton &SettingsButton::st() const {
 	return _st;
+}
+
+int SettingsButton::fullTextWidth() const {
+	return _text.maxWidth();
 }
 
 void SettingsButton::paintEvent(QPaintEvent *e) {
@@ -820,6 +845,10 @@ QRect SettingsButton::toggleRect() const {
 	auto left = width() - _st.toggleSkip - size.width();
 	auto top = (height() - size.height()) / 2;
 	return { QPoint(left, top), size };
+}
+
+QRect SettingsButton::maybeToggleRect() const {
+	return _toggle ? toggleRect() : QRect(0, 0, 0, 0);
 }
 
 int SettingsButton::resizeGetHeight(int newWidth) {

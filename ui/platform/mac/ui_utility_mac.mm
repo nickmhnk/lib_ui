@@ -72,14 +72,26 @@ void ShowOverAll(not_null<QWidget*> widget, bool canFocus) {
 	NSWindow *wnd = [reinterpret_cast<NSView*>(widget->winId()) window];
 	[wnd setLevel:NSPopUpMenuWindowLevel];
 	if (!canFocus) {
-		[wnd setStyleMask:NSUtilityWindowMask | NSNonactivatingPanelMask];
+		[wnd setStyleMask:NSWindowStyleMaskUtilityWindow | NSWindowStyleMaskNonactivatingPanel];
 		[wnd setCollectionBehavior:NSWindowCollectionBehaviorMoveToActiveSpace|NSWindowCollectionBehaviorStationary|NSWindowCollectionBehaviorFullScreenAuxiliary|NSWindowCollectionBehaviorIgnoresCycle];
 	}
 }
 
-void BringToBack(not_null<QWidget*> widget) {
-	NSWindow *wnd = [reinterpret_cast<NSView*>(widget->winId()) window];
-	[wnd setLevel:NSModalPanelWindowLevel];
+void AcceptAllMouseInput(not_null<QWidget*> widget) {
+	// https://github.com/telegramdesktop/tdesktop/issues/27025
+	//
+	// By default system clicks through fully transparent pixels,
+	// and starting with macOS 14.1 it counts the transparency
+	// incorrectly (as if `y` is mirrored), so when clicking
+	// on a reactions strip outside of the menu column the click
+	// is ignored and made on the underlying window, because at the
+	// bottom of the menu in the same place there is nothing, empty.
+	//
+	// We explicitly request all the input to disable this behavior.
+	//
+	// See https://stackoverflow.com/a/29451199 and comments.
+	NSWindow *window = [reinterpret_cast<NSView*>(widget->winId()) window];
+	[window setIgnoresMouseEvents:NO];
 }
 
 void DrainMainQueue() {
@@ -152,14 +164,10 @@ std::optional<bool> IsOverlapped(
 	return false;
 }
 
-TitleControls::Layout TitleControlsLayout() {
-	return TitleControls::Layout{
-		.left = {
-			TitleControls::Control::Close,
-			TitleControls::Control::Minimize,
-			TitleControls::Control::Maximize,
-		}
-	};
+void SetGeometryWithPossibleScreenChange(
+		not_null<QWidget*> widget,
+		QRect geometry) {
+	widget->setGeometry(geometry);
 }
 
 } // namespace Platform

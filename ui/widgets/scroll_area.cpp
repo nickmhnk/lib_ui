@@ -9,6 +9,7 @@
 #include "ui/painter.h"
 #include "ui/ui_utility.h"
 #include "base/qt/qt_common_adapters.h"
+#include "base/debug_log.h"
 
 #include <QtWidgets/QScrollBar>
 #include <QtWidgets/QApplication>
@@ -19,10 +20,13 @@ namespace Ui {
 
 // flick scroll taken from http://qt-project.org/doc/qt-4.8/demos-embedded-anomaly-src-flickcharm-cpp.html
 
-ScrollShadow::ScrollShadow(ScrollArea *parent, const style::ScrollArea *st) : QWidget(parent), _st(st) {
+ScrollShadow::ScrollShadow(ScrollArea *parent, const style::ScrollArea *st)
+: QWidget(parent)
+, _st(st) {
+	Expects(_st != nullptr);
+	Expects(_st->shColor.get() != nullptr);
+
 	setVisible(false);
-	Assert(_st != nullptr);
-	Assert(_st->shColor.v() != nullptr);
 }
 
 void ScrollShadow::paintEvent(QPaintEvent *e) {
@@ -198,14 +202,18 @@ void ScrollBar::paintEvent(QPaintEvent *e) {
 	bg.setAlpha(anim::interpolate(0, bg.alpha(), opacity));
 	auto bar = anim::color(_st->barBg, _st->barBgOver, _a_barOver.value((_overbar || _moving) ? 1. : 0.));
 	bar.setAlpha(anim::interpolate(0, bar.alpha(), opacity));
-	if (_st->round) {
+	const auto outer = QRect(deltal, deltat, width() - deltal - deltar, height() - deltat - deltab);
+	const auto radius = (_st->round < 0)
+		? (std::min(outer.width(), outer.height()) / 2.)
+		: _st->round;
+	if (radius) {
 		PainterHighQualityEnabler hq(p);
 		p.setBrush(bg);
-		p.drawRoundedRect(QRect(deltal, deltat, width() - deltal - deltar, height() - deltat - deltab), _st->round, _st->round);
+		p.drawRoundedRect(outer, radius, radius);
 		p.setBrush(bar);
-		p.drawRoundedRect(_bar, _st->round, _st->round);
+		p.drawRoundedRect(_bar, radius, radius);
 	} else {
-		p.fillRect(QRect(deltal, deltat, width() - deltal - deltar, height() - deltat - deltab), bg);
+		p.fillRect(outer, bg);
 		p.fillRect(_bar, bar);
 	}
 }
@@ -471,29 +479,52 @@ void ScrollArea::touchResetSpeed() {
 	_touchPrevPosValid = false;
 }
 
+bool ScrollArea::eventHook(QEvent *e) {
+	const auto was = (e->type() == QEvent::LayoutRequest)
+		? verticalScrollBar()->minimum()
+		: 0;
+	const auto result = RpWidgetBase<QScrollArea>::eventHook(e);
+	if (was) {
+		// Because LayoutRequest resets custom-set minimum allowed value.
+		verticalScrollBar()->setMinimum(was);
+	}
+	return result;
+}
+
 bool ScrollArea::eventFilter(QObject *obj, QEvent *e) {
-	bool res = QScrollArea::eventFilter(obj, e);
-	if (e->type() == QEvent::TouchBegin || e->type() == QEvent::TouchUpdate || e->type() == QEvent::TouchEnd || e->type() == QEvent::TouchCancel) {
-		QTouchEvent *ev = static_cast<QTouchEvent*>(e);
-		if (_touchEnabled && ev->device()->type() == base::TouchDevice::TouchScreen) {
-			if (obj == widget()) {
+	const auto result = QScrollArea::eventFilter(obj, e);
+	return (obj == widget() && filterOutTouchEvent(e)) || result;
+}
+
+bool ScrollArea::viewportEvent(QEvent *e) {
+	if (filterOutTouchEvent(e)) {
+		return true;
+	} else if (e->type() == QEvent::Wheel) {
+		if (_customWheelProcess
+			&& _customWheelProcess(static_cast<QWheelEvent*>(e))) {
+			return true;
+		}
+	}
+	return QScrollArea::viewportEvent(e);
+}
+
+bool ScrollArea::filterOutTouchEvent(QEvent *e) {
+	const auto type = e->type();
+	if (type == QEvent::TouchBegin
+		|| type == QEvent::TouchUpdate
+		|| type == QEvent::TouchEnd
+		|| type == QEvent::TouchCancel) {
+		const auto ev = static_cast<QTouchEvent*>(e);
+		if (ev->device()->type() == base::TouchDevice::TouchScreen) {
+			if (_customTouchProcess && _customTouchProcess(ev)) {
+				return true;
+			} else if (_touchEnabled) {
 				touchEvent(ev);
 				return true;
 			}
 		}
 	}
-	return res;
-}
-
-bool ScrollArea::viewportEvent(QEvent *e) {
-	if (e->type() == QEvent::TouchBegin || e->type() == QEvent::TouchUpdate || e->type() == QEvent::TouchEnd || e->type() == QEvent::TouchCancel) {
-		QTouchEvent *ev = static_cast<QTouchEvent*>(e);
-		if (_touchEnabled && ev->device()->type() == base::TouchDevice::TouchScreen) {
-			touchEvent(ev);
-			return true;
-		}
-	}
-	return QScrollArea::viewportEvent(e);
+	return false;
 }
 
 void ScrollArea::touchEvent(QTouchEvent *e) {
@@ -611,9 +642,12 @@ void ScrollArea::scrollContentsBy(int dx, int dy) {
 }
 
 bool ScrollArea::touchScroll(const QPoint &delta) {
-	int32 scTop = scrollTop(), scMax = scrollTopMax(), scNew = std::clamp(scTop - delta.y(), 0, scMax);
-	if (scNew == scTop) return false;
-
+	const auto scTop = scrollTop();
+	const auto scMax = scrollTopMax();
+	const auto scNew = std::clamp(scTop - delta.y(), 0, scMax);
+	if (scNew == scTop) {
+		return false;
+	}
 	scrollToY(scNew);
 	return true;
 }
@@ -633,7 +667,9 @@ void ScrollArea::moveEvent(QMoveEvent *e) {
 }
 
 void ScrollArea::keyPressEvent(QKeyEvent *e) {
-	if ((e->key() == Qt::Key_Up || e->key() == Qt::Key_Down) && e->modifiers().testFlag(Qt::AltModifier)) {
+	if ((e->key() == Qt::Key_Up || e->key() == Qt::Key_Down)
+		&& (e->modifiers().testFlag(Qt::AltModifier)
+			|| e->modifiers().testFlag(Qt::ControlModifier))) {
 		e->ignore();
 	} else if(e->key() == Qt::Key_Escape || e->key() == Qt::Key_Back) {
 		((QObject*)widget())->event(e);
@@ -673,32 +709,48 @@ void ScrollArea::scrollToWidget(not_null<QWidget*> widget) {
 	}
 }
 
-void ScrollArea::scrollToY(int toTop, int toBottom) {
+int ScrollArea::computeScrollTo(int toTop, int toBottom) {
 	if (const auto inner = widget()) {
 		SendPendingMoveResizeEvents(inner);
 	}
 	SendPendingMoveResizeEvents(this);
 
-	int toMin = 0, toMax = scrollTopMax();
+	const auto toMin = 0;
+	const auto toMax = scrollTopMax();
 	if (toTop < toMin) {
 		toTop = toMin;
 	} else if (toTop > toMax) {
 		toTop = toMax;
 	}
-	bool exact = (toBottom < 0);
+	const auto exact = (toBottom < 0);
 
-	int curTop = scrollTop(), curHeight = height(), curBottom = curTop + curHeight, scToTop = toTop;
+	const auto curTop = scrollTop();
+	const auto curHeight = height();
+	const auto curBottom = curTop + curHeight;
+	auto scToTop = toTop;
 	if (!exact && toTop >= curTop) {
-		if (toBottom < toTop) toBottom = toTop;
-		if (toBottom <= curBottom) return;
+		if (toBottom < toTop) {
+			toBottom = toTop;
+		}
+		if (toBottom <= curBottom) {
+			return curTop;
+		}
 
 		scToTop = toBottom - curHeight;
-		if (scToTop > toTop) scToTop = toTop;
-		if (scToTop == curTop) return;
+		if (scToTop > toTop) {
+			scToTop = toTop;
+		}
+		if (scToTop == curTop) {
+			return curTop;
+		}
 	} else {
 		scToTop = toTop;
 	}
-	verticalScrollBar()->setValue(scToTop);
+	return scToTop;
+}
+
+void ScrollArea::scrollToY(int toTop, int toBottom) {
+	verticalScrollBar()->setValue(computeScrollTo(toTop, toBottom));
 }
 
 void ScrollArea::doSetOwnedWidget(object_ptr<QWidget> w) {
